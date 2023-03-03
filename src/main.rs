@@ -1,3 +1,4 @@
+use futures_util::TryStreamExt;
 use sqlx::{
     sqlite::{
         Sqlite, SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
@@ -6,47 +7,7 @@ use sqlx::{
 };
 use std::{io::Error, path::Path};
 use tempfile::TempDir;
-use tokio::fs;
-
-pub(crate) struct Pool {
-    // Pool with a single read-only connection.
-    reads: SqlitePool,
-    // Pool with a single writable connection.
-    write: SqlitePool,
-}
-
-impl Pool {
-    async fn create(connect_options: SqliteConnectOptions) -> Result<Self, sqlx::Error> {
-        let common_options = connect_options
-            //.journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .pragma("recursive_triggers", "ON");
-
-        let write_options = common_options.clone();
-        let write = SqlitePoolOptions::new()
-            .min_connections(1)
-            .max_connections(1)
-            .test_before_acquire(false)
-            .connect_with(write_options)
-            .await?;
-
-        let read_options = common_options.read_only(true);
-        let reads = SqlitePoolOptions::new()
-            .min_connections(1)
-            .max_connections(1)
-            .test_before_acquire(false)
-            .connect_with(read_options)
-            .await?;
-
-        Ok(Self { reads, write })
-    }
-
-    pub(crate) async fn close(&self) -> Result<(), sqlx::Error> {
-        self.write.close().await;
-        self.reads.close().await;
-        Ok(())
-    }
-}
+use tokio::{fs, select};
 
 #[tokio::main]
 async fn main() {
@@ -56,8 +17,15 @@ async fn main() {
 }
 
 async fn database_commit_consistency(run_i: u32) {
-    use futures_util::TryStreamExt;
-    use tokio::select;
+    // Pseudocode:
+    // 1. Create two databases `a` and `b`, each having pools of one read and one write connection.
+    // 2. Create table `a_table` in `a` and `b_table` in `b`.
+    // 3. Write 200 entries into `a_table`
+    // 4. In parallel:
+    //    a. Do some write operation on `b_table` in a loop.
+    //    b. Try to retrieve the latest entry from `a_table`.
+    //
+    // The step 4a occasionally fails
 
     let (_a_base_dir, a_pool) = create_temp_db().await.unwrap();
     let (_b_base_dir, b_pool) = create_temp_db().await.unwrap();
@@ -130,6 +98,46 @@ async fn database_commit_consistency(run_i: u32) {
 
     a_pool.close().await.unwrap();
     b_pool.close().await.unwrap();
+}
+
+pub(crate) struct Pool {
+    // Pool with a single read-only connection.
+    reads: SqlitePool,
+    // Pool with a single writable connection.
+    write: SqlitePool,
+}
+
+impl Pool {
+    async fn create(connect_options: SqliteConnectOptions) -> Result<Self, sqlx::Error> {
+        let common_options = connect_options
+            //.journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .pragma("recursive_triggers", "ON");
+
+        let write_options = common_options.clone();
+        let write = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .test_before_acquire(false)
+            .connect_with(write_options)
+            .await?;
+
+        let read_options = common_options.read_only(true);
+        let reads = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .test_before_acquire(false)
+            .connect_with(read_options)
+            .await?;
+
+        Ok(Self { reads, write })
+    }
+
+    pub(crate) async fn close(&self) -> Result<(), sqlx::Error> {
+        self.write.close().await;
+        self.reads.close().await;
+        Ok(())
+    }
 }
 
 async fn create_directory(path: &Path) -> Result<(), Error> {

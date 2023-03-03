@@ -2,6 +2,14 @@
 
 set -e
 
+# Pseudocode of what this bash script does
+# 1. Build the executable
+# 2. Run 200 instances of the executable in a loop
+# 3. Once the first executable fails (returns non zero error code),
+#    kill all the rest of the instances
+# 4. Save the log from the failed exetutable in a particular location and open
+#    it with vim
+
 # Directories used in this test
 rm -rf /tmp/.tmp*
 rm -rf /tmp/ouisync-test-*
