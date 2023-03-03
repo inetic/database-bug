@@ -30,7 +30,6 @@ async fn database_commit_consistency(run_i: u32) {
     let (_a_base_dir, a_pool) = create_temp_db().await.unwrap();
     let (_b_base_dir, b_pool) = create_temp_db().await.unwrap();
 
-    println!("START");
     {
         let mut tx = a_pool.write.begin().await.unwrap();
         sqlx::query("CREATE TABLE a_table (id INTEGER PRIMARY KEY)")
@@ -111,8 +110,8 @@ impl Pool {
     async fn create(connect_options: SqliteConnectOptions) -> Result<Self, sqlx::Error> {
         let common_options = connect_options
             //.journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .pragma("recursive_triggers", "ON");
+            //.pragma("recursive_triggers", "ON")
+            .synchronous(SqliteSynchronous::Normal);
 
         let write_options = common_options.clone();
         let write = SqlitePoolOptions::new()
