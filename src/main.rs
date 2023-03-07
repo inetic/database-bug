@@ -83,15 +83,43 @@ async fn database_commit_consistency(run_i: u32) {
         _ = async {
             let mut conn = a_pool.reads.acquire().await.unwrap();
 
-            let vec: Vec<u32> = sqlx::query("SELECT id FROM a_table WHERE id = ?")
-                .bind(&(highest_id as i64))
-                .fetch(&mut *conn)
-                .map_ok(|row| row.get::<u32, usize>(0))
-                .try_collect()
-                .await
-                .unwrap();
 
-            assert!(!vec.is_empty(), "Failed to retrieve on {}-th iterations", run_i);
+            let highest_id_i64 = highest_id as i64;
+            use futures_util::StreamExt;
+            println!("####################################################################################");
+            println!("Start SELECT");
+            let mut stream = sqlx::query("SELECT id FROM a_table WHERE id = ?")
+                .bind(&highest_id_i64)
+                .fetch_many(&mut *conn)
+                .map_ok(|row| match row {
+                    sqlx::Either::Left(x) => {
+                        println!("got left");
+                        sqlx::Either::Left(x)
+                    },
+                    sqlx::Either::Right(row) => {
+                        println!("got right");
+                        sqlx::Either::Right(row.get::<u32, usize>(0))
+                    }
+                })
+                .map_err(|e| {
+                    println!("Error {:?}", e);
+                    e
+                })
+                ;
+
+            select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    panic!("Timed out");
+                }
+                maybe_row_result = stream.next() => {
+                    match maybe_row_result {
+                        Some(row_result) => {
+                            assert_eq!(row_result.expect("no error").right().unwrap(), highest_id);
+                        },
+                        None => panic!("Row not returned"),
+                    }
+                }
+            }
         } => {},
     }
 
